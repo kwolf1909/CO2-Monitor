@@ -1,3 +1,25 @@
+//------------------------------------------------------------------------------------------------
+//  1614-CO2-14seg.ino
+//
+//  This project realizes a CO2-monitor based on Sensirion-sensor SCD41.
+//  The hardware-components are: MCU ATtiny1614 (16 KB flash), SCD41, Adafruit alphanumeric
+//  4-digit display, PEC11-based rotary encoder. An Arduino Nano Every could be used as well,
+//  as it shares the same modern AVR-architecture.
+//  It shows the current CO2-value, the temperature or humidity.
+//  The user interface is rotary-knob based, to select between display-modes CO2, TEMP, HUM, VCC
+//  and CAL-Mode.
+//  A seperate LED indicates several warning-levels by blink-signals.
+//  1 blink: CO2-level above 800PPM, 2 blinks: CO2-level above 1500PPM, 3 blinks: battery low,
+//  4 blinks: No sensor data
+//  Manual sensor calibration: put the sensor in outside air (~400 PPM) and start calibration.
+//  This process takes 3 minutes. A timer countdown is shown meanwhile.
+//
+//  MCU-clock: 8 MHz (recommended)
+//
+//  Author: Klaus Wolf
+//  Date: Oct 20 2026
+//------------------------------------------------------------------------------------------------
+
 #include <Wire.h>
 #include <SensirionI2cScd4x.h>
 #include <RTClib.h>
@@ -7,16 +29,16 @@
 
 //#define DEBUGSERIAL
 
-#define VERSION             "1.000"
+#define VERSION             "1.001"
 
 #define DISPLAY_ADDRESS     0x70
 #define DISPLAY_DIGITS      4
 #define DISPLAY_BRIGHTNESS  4
 
-#define ENCA_PIN            8
-#define ENCB_PIN            9
-#define BUTTON_PIN          10
-#define STATUS_LED          0
+#define ENCA_PIN            8   // PA1
+#define ENCB_PIN            9   // PA2
+#define BUTTON_PIN          10  // PA3
+#define STATUS_LED          0   // PA4
 
 #define WAIT_DELAY          3000
 #define HALFSEC_DELAY       500
@@ -26,22 +48,21 @@
 #define COUNT_DELAY         250
 #define SENSOR_DELAY        1000
 #define VCC_DELAY           10000
-
+#define VCC_LOWLIMIT        2900
 #define SENSOR_ALTITUDE     50
 #define SENSOR_TARGETCO2    400
 #define SENSOR_CYCLES       60
 #define CAL_MINUTES         3
 #define CAL_SECONDS         0
 #define TEMPOFFSET_MAX      99
-#define VCC_LOWLIMIT        29
 
 #define CO2LEVEL_800        800
 #define CO2LEVEL_1500       1500
 
 #define IND_MEDIUM          0x01
 #define IND_HIGH            0x02
-#define IND_NODATA          0x04
-#define IND_VCCLOW          0x08
+#define IND_VCCLOW          0x04
+#define IND_NODATA          0x08
 
 // make sure that we use the proper definition of NO_ERROR
 #ifdef NO_ERROR
@@ -50,22 +71,17 @@
 #define NO_ERROR 0
 
 SensirionI2cScd4x sensor;
-
 DateTime dt;
-
 AlphaDisplay alpha;
-
 RotaryEncoder *rotary = nullptr;
 
-bool      sens, update, updateFailed, buttonPressed, bVcc, rotaryRight, rotaryLeft, colon, warnLed, calStart, calStop;
+bool      sens, update, updateFailed, buttonPressed, readVcc, rotaryRight, rotaryLeft, colon, warnLed, calStart, calStop;
 uint8_t   sysState, nextState, warnState, warnLevel, warnLedCycle, flashSequence, sensorState,
           sensorCycles, dispState, counter, tempOffset;
 uint8_t   pinBitmaskButton, pinBitmaskEncA, pinBitmaskEncB, pinBitmaskLed, portId;
-uint16_t  vcc, co2, oldCo2, hum, pos, alt;
+uint16_t  vcc, co2, oldCo2, hum, alt;
 int16_t   error, temp;
 uint32_t  waitTime, halfSecTime, sensTime, endTime, flashTime, dispTime, animateTime, vccTime;
-
-volatile uint8_t a0, b0;
 
 enum { STATE_INIT = 1, STATE_SHOWCO2, STATE_SHOWTEMP, STATE_SHOWHUM, STATE_SHOWVCC, STATE_SETALT, STATE_SETTEMP, STATE_SETPRESSURE, STATE_CALINIT, STATE_CALWAIT,
        STATE_CALFINISHED, STATE_SELCO2, STATE_SELTEMP, STATE_SELHUM, STATE_SELVCC, STATE_SELCAL, STATE_WAIT, STATE_WAIT3SEC, STATE_SENSORERROR
@@ -90,6 +106,7 @@ void PrintUint64(uint64_t& value) {
 void setup() {
 
 #ifdef DEBUGSERIAL
+  //Serial.swap(1); // TX PA1 in swap-mode, else PB2
   Serial.begin(115200, SERIAL_TX_ONLY);
   delay(100);
   Serial.println("Init...");
@@ -189,13 +206,11 @@ void setup() {
   buttonPressed = false;
   update = false;
   updateFailed = false;
-  bVcc = false;
+  readVcc = false;
   calStart = false;
   calStop = false;
   rotaryRight = rotaryLeft = false;
   warnLevel = 0;
-  a0 = b0 = 0;
-  pos = 0;
   co2 = oldCo2 = 0;
   temp = hum = 0;
 
@@ -290,9 +305,9 @@ uint8_t handleState(uint8_t state) {
       break;
 
     case STATE_SHOWVCC:
-      if (bVcc) {
+      if (readVcc) {
         showDisplay(DISPLAY_VCC, vcc, NULL, 0, 0, false);
-        bVcc = false;
+        readVcc = false;
       }
       if (rotaryRight) return STATE_SELCAL;
       if (rotaryLeft) return STATE_SELHUM;
@@ -404,7 +419,7 @@ uint8_t handleState(uint8_t state) {
 
     case STATE_SELVCC:
       showDisplay(DISPLAY_TEXT, 0, "VCC ", 0, 0, false);
-      bVcc = true;
+      readVcc = true;
       nextState = STATE_SHOWVCC;
       waitTime = currentTime;
       return STATE_WAIT3SEC;
@@ -616,7 +631,7 @@ uint8_t handleWarning(uint8_t state) {
   if (currentTime - vccTime > VCC_DELAY) {
     vccTime = currentTime;
     vcc = measureVoltage();
-    bVcc = true;
+    readVcc = true;
 
     if (vcc < VCC_LOWLIMIT) warnLevel |= IND_VCCLOW;
     else warnLevel &= ~IND_VCCLOW;
@@ -641,8 +656,8 @@ uint8_t handleWarning(uint8_t state) {
           if (warnLevel) {
             if (warnLevel & IND_MEDIUM) flashSequence = 1;
             if (warnLevel & IND_HIGH) flashSequence = 2;
-            if (warnLevel & IND_NODATA) flashSequence = 3;
-            if (warnLevel & IND_VCCLOW) flashSequence = 4;
+            if (warnLevel & IND_VCCLOW) flashSequence = 3;
+            if (warnLevel & IND_NODATA) flashSequence = 4;
             warnLedCycle = 20;
             warnLed = true;
             return WARN_FLASH;
@@ -769,7 +784,7 @@ uint8_t getTempOff(void) {
 
 #ifdef DEBUGSERIAL
   char buf[40];
-  sprintf(buf, "getTempOffset: %u", (uint16_t)((tempOff * 10.0) + 0.5)));
+  sprintf(buf, "getTempOffset: %u", (uint16_t)((tempOff * 10.0) + 0.5));
   Serial.println(buf);
 #endif
   return (uint8_t)((tempOff * 10.0) + 0.5);
