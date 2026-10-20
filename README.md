@@ -6,7 +6,7 @@ The user interface is rotary-knob based, to select between display-modes CO2, TE
 -In TEMP-Mode, pushing the button enters temperature calibration mode.<br>
 -In HUM-Mode, the humidity is displayed.<br>
 -In VCC-Mode, the supply-voltage is displayed.<br>
--Selecting CAL enters manual CO2 calibration-mode. This requires putting the sensor to outside air with ~400 PPM for 3 minutes.<br><br>
+-Selecting CAL enters manual CO2 calibration-mode. This requires putting the sensor to outside air (~400 PPM) for 3 minutes.<br><br>
 A seperate LED indicates several warning-levels by blink-signals.<br>
 1 blink: CO2-level above 800PPM, 2 blinks: CO2-level above 1500PPM, 3 blinks: battery low,<br>
 4 blinks: No sensor data<br><br>
