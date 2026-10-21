@@ -10,6 +10,14 @@ The user interface is rotary-knob based, to select between display-modes CO2, TE
 A separate LED indicates several warning-levels by blink-signals.<br>
 1 blink: CO2-level above 800PPM, 2 blinks: CO2-level above 1500PPM, 3 blinks: battery low,<br>
 4 blinks: No sensor data<br><br>
+Pins used:<br>
+PA1 - Rotary encoder pin A<br>
+PA2 - Rotary encoder pin B<br>
+PA3 - Rotary encoder push button<br>
+PA4 - Status LED (active high)<br>
+PB0 - I2C CLK (display)<br>
+PB1 - I2C DATA (display)<br>
+PB2 - TX (serial debug output)<br><br>
 The software should be compatible with all modern AVRs like ATtiny 0/1/2-series, ATmega 0-series (Arduino Nano Every) and AVR Dx-series.<br>
 External libraries used: SensirionI2cScd4x, RTClib<br>
 Compiles in Arduino IDE using MegaTinyCore, MegaAVR-core, DxCore - depending on MCU used.<br>
