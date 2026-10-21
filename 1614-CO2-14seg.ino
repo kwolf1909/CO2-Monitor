@@ -8,7 +8,7 @@
 //  It shows the current CO2-value, the temperature or humidity.
 //  The user interface is rotary-knob based, to select between display-modes CO2, TEMP, HUM, VCC
 //  and CAL-Mode.
-//  A seperate LED indicates several warning-levels by blink-signals.
+//  A seperate LED indicates several warning-levels by blink-codes.
 //  1 blink: CO2-level above 800PPM, 2 blinks: CO2-level above 1500PPM, 3 blinks: battery low,
 //  4 blinks: No sensor data
 //  Manual sensor calibration: put the sensor in outside air (~400 PPM) and start calibration.
@@ -17,12 +17,13 @@
 //  MCU-clock: 8 MHz (recommended)
 //
 //  Author: Klaus Wolf
-//  Date: Oct 20 2026
+//  Date: Oct 21 2026
 //------------------------------------------------------------------------------------------------
 
 #include <Wire.h>
 #include <SensirionI2cScd4x.h>
 #include <RTClib.h>
+#include <stdlib.h>
 #include "RotaryEncoder.h"
 #define SEG14
 #include "AlphaDisplay.h"
@@ -56,8 +57,8 @@
 #define CAL_SECONDS         0
 #define TEMPOFFSET_MAX      99
 
-#define CO2LEVEL_800        800
-#define CO2LEVEL_1500       1500
+#define CO2LEVEL1           800
+#define CO2LEVEL2           1500
 
 #define IND_MEDIUM          0x01
 #define IND_HIGH            0x02
@@ -79,7 +80,7 @@ bool      sens, update, updateFailed, buttonPressed, readVcc, rotaryRight, rotar
 uint8_t   sysState, nextState, warnState, warnLevel, warnLedCycle, flashSequence, sensorState,
           sensorCycles, dispState, counter, tempOffset;
 uint8_t   pinBitmaskButton, pinBitmaskEncA, pinBitmaskEncB, pinBitmaskLed, portId;
-uint16_t  vcc, co2, oldCo2, hum, alt;
+uint16_t  vcc, co2, prevCo2, hum, alt;
 int16_t   error, temp;
 uint32_t  waitTime, halfSecTime, sensTime, endTime, flashTime, dispTime, animateTime, vccTime;
 
@@ -211,7 +212,7 @@ void setup() {
   calStop = false;
   rotaryRight = rotaryLeft = false;
   warnLevel = 0;
-  co2 = oldCo2 = 0;
+  co2 = prevCo2 = 0;
   temp = hum = 0;
 
   sensTime = flashTime = dispTime = animateTime = vccTime = millis();
@@ -513,9 +514,9 @@ uint8_t handleSensor(uint8_t state) {
           warnLevel &= ~IND_NODATA;
 
           // set warning levels for indicator LED
-          if (co2 <= CO2LEVEL_800) warnLevel &= ~(IND_MEDIUM | IND_HIGH);
-          if (co2 > CO2LEVEL_800) warnLevel |= IND_MEDIUM;
-          if (co2 > CO2LEVEL_1500) warnLevel |= IND_HIGH;
+          if (co2 <= CO2LEVEL1) warnLevel &= ~(IND_MEDIUM | IND_HIGH);
+          if (co2 > CO2LEVEL1) warnLevel |= IND_MEDIUM;
+          if (co2 > CO2LEVEL2) warnLevel |= IND_HIGH;
         }
         else {
 #ifdef DEBUGSERIAL
@@ -568,7 +569,7 @@ uint8_t handleSensor(uint8_t state) {
 
 uint8_t handleDisplay(uint8_t state) {
   uint32_t currentTime = millis();
-  static uint8_t oldState = STATE_INIT;
+  static uint8_t prevState = STATE_INIT;
 
   // display animation and counter effect
   if (currentTime - dispTime > ANIMATE_DELAY) {
@@ -584,14 +585,14 @@ uint8_t handleDisplay(uint8_t state) {
         break;
 
       case DISP_IDLE:
-        if (oldState != sysState) {
-          oldState = sysState;
+        if (prevState != sysState) {
+          prevState = sysState;
           if (sysState == STATE_SHOWCO2) showDisplay (DISPLAY_CO2, co2, NULL, 0, 0, false);
           break;
         }
         // initialize counter if value changed
         if (sysState == STATE_SHOWCO2) {
-          if (oldCo2 != co2) {
+          if (prevCo2 != co2) {
             counter = 0;
             return DISP_COUNT;
           }
@@ -601,18 +602,18 @@ uint8_t handleDisplay(uint8_t state) {
       case DISP_COUNT:
         if (sysState == STATE_SHOWCO2) {
           if (counter == 0) {
-            int diff = oldCo2 - co2;
-            diff = diff < 0 ? -diff : diff;
+            uint8_t diff = abs(prevCo2 - co2);
             if (diff < 50) {
-              if (oldCo2 < co2) oldCo2++;
-              if (oldCo2 > co2) oldCo2--;
+              if (prevCo2 < co2) prevCo2++;
+              if (prevCo2 > co2) prevCo2--;
             }
-            else oldCo2 = co2;
+            else prevCo2 = co2;
 
-            showDisplay (DISPLAY_CO2, oldCo2, NULL, 0, 0, false);
+            showDisplay (DISPLAY_CO2, prevCo2, NULL, 0, 0, false);
 
-            if (oldCo2 == co2) return DISP_IDLE;
+            if (prevCo2 == co2) return DISP_IDLE;
           }
+          // divide animate clock by two
           if (counter++) counter = 0;
         }
         else return DISP_IDLE;
@@ -844,17 +845,18 @@ bool readSensor(void) {
   hum = (int16_t)relativeHumidity;
 
   warnLevel = 0;
-  if (co2 > CO2LEVEL_800) warnLevel = IND_MEDIUM;
-  if (co2 > CO2LEVEL_1500) warnLevel = IND_HIGH;
+  if (co2 > CO2LEVEL1) warnLevel = IND_MEDIUM;
+  if (co2 > CO2LEVEL2) warnLevel = IND_HIGH;
 
   return true;
 }
 
 void ADCinit(void) {
+  // setup ADC to read 64 samples per measurement
   VREF.CTRLA = (VREF.CTRLA & ~VREF_ADC0REFSEL_gm) | VREF_ADC0REFSEL_1V1_gc;
   ADC0.MUXPOS = ADC_MUXPOS_INTREF_gc;
   ADC0.CTRLB = ADC_SAMPNUM_ACC64_gc;
-  ADC0.CTRLC = ADC_REFSEL_VDDREF_gc | ADC_PRESC_DIV16_gc | ADC_SAMPCAP_bm;
+  ADC0.CTRLC = ADC_REFSEL_VDDREF_gc | ADC_PRESC_DIV64_gc | ADC_SAMPCAP_bm;
   ADC0.MUXPOS = ADC_MUXPOS_INTREF_gc;
 }
 
@@ -864,18 +866,17 @@ uint16_t measureVoltage(void) {
   ADC0.INTFLAGS = ADC_RESRDY_bm;
   uint16_t accumulatedVal = ADC0.RES;
   if (accumulatedVal == 0) return 0;
+  // return millivolts
   return (uint16_t)(72019200UL / accumulatedVal);
 }
 
 // ------------------------------- ISR Rotary --------------------------------
 
 ISR(PORTA_PORT_vect) {
-  uint8_t in = PORTA.IN;
-  uint8_t a = (in & pinBitmaskEncA) ? 1 : 0;
-  uint8_t b = (in & pinBitmaskEncB) ? 1 : 0;
+  uint8_t portVal = PORTA.IN;
 
   PORTA.INTFLAGS = 0xFF;
 
   // handle rotary encoder changes
-  rotary->tick(a, b);
+  rotary->tick((portVal & pinBitmaskEncA) ? 1 : 0, (portVal & pinBitmaskEncB) ? 1 : 0);
 }
