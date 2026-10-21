@@ -15,8 +15,8 @@ PA1 - Rotary encoder pin A<br>
 PA2 - Rotary encoder pin B<br>
 PA3 - Rotary encoder push button<br>
 PA4 - Status LED (active high)<br>
-PB0 - I2C CLK (display)<br>
-PB1 - I2C DATA (display)<br>
+PB0 - I2C CLK (sensor & display)<br>
+PB1 - I2C DATA (sensor & display)<br>
 PB2 - TX (serial debug output)<br><br>
 The software should be compatible with all modern AVRs like ATtiny 0/1/2-series, ATmega 0-series (Arduino Nano Every) and AVR Dx-series.<br>
 External libraries used: SensirionI2cScd4x, RTClib<br>
